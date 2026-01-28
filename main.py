@@ -8,8 +8,8 @@ import os
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()  # Получаем токен из переменных окружения
 
 # ID Discord сервера и канала
-GUILD_ID = 1458079554278129721
-CHANNEL_ID = 1458081872851767414
+GUILD_ID = 1453830527705550981
+CHANNEL_ID = 1458082973382475873
 
 # СТИЛЬ MIRAGE
 MIRAGE_YELLOW = 0xF5C400
