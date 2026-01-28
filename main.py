@@ -1,11 +1,15 @@
 import discord
 from discord.ext import commands
+import asyncio
+import os
 
 # ================= НАСТРОЙКИ =================
+# Для bothost.ru используем переменную окружения
+TOKEN = os.getenv("DISCORD_TOKEN", "").strip()  # Получаем токен из переменных окружения
 
-TOKEN = ''  # ⚠️ ВСТАВЬТЕ СВОЙ ТОКЕН!
-GUILD_ID = 1458079554278129721  # ID Discord сервера
-CHANNEL_ID = 1458081872851767414  # ID канала #информация
+# ID Discord сервера и канала
+GUILD_ID = 1458079554278129721
+CHANNEL_ID = 1458081872851767414
 
 # СТИЛЬ MIRAGE
 MIRAGE_YELLOW = 0xF5C400
@@ -39,22 +43,29 @@ class InfoSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "🖥 Серверы":
-            embed = servers_embed()
-        elif self.values[0] == "📜 Правила":
-            embed = rules_embed()
-        else:
-            embed = support_embed()
+        try:
+            if self.values[0] == "🖥 Серверы":
+                embed = servers_embed()
+            elif self.values[0] == "📜 Правила":
+                embed = rules_embed()
+            else:
+                embed = support_embed()
 
-        await interaction.response.send_message(
-            embed=embed,
-            ephemeral=True
-        )
+            await interaction.response.send_message(
+                embed=embed,
+                ephemeral=True,
+                delete_after=60  # Удалить через 1 минуту для экономии места
+            )
+        except Exception as e:
+            print(f"Ошибка в селекторе: {e}")
 
 
 class InfoView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+
+    async def setup(self):
+        """Инициализация после создания бота"""
         self.add_item(InfoSelect())
 
 
@@ -198,6 +209,7 @@ async def info(interaction: discord.Interaction):
     try:
         embed = main_embed()
         view = InfoView()
+        await view.setup()
         await interaction.response.send_message(
             embed=embed,
             view=view,
@@ -205,6 +217,13 @@ async def info(interaction: discord.Interaction):
         )
     except Exception as e:
         print(f"Error in info command: {e}")
+        try:
+            await interaction.response.send_message(
+                "Произошла ошибка при выполнении команды.",
+                ephemeral=True
+            )
+        except:
+            pass
 
 
 # ================= ON READY =================
@@ -217,30 +236,57 @@ async def on_ready():
         print(f"👥 Серверов: {len(bot.guilds)}")
         print("=" * 50)
 
-        # Синхронизируем команды
-        await bot.tree.sync()
+        # Синхронизируем команды с задержкой
+        await asyncio.sleep(1)
+        try:
+            synced = await bot.tree.sync()
+            print(f"✅ Синхронизировано {len(synced)} команд")
+        except Exception as e:
+            print(f"⚠️ Ошибка синхронизации команд: {e}")
 
         # Регистрируем персистентные View
-        bot.add_view(InfoView())
+        view = InfoView()
+        await view.setup()
+        bot.add_view(view)
 
         # Автоматически отправляем сообщение в указанный канал
         channel = bot.get_channel(CHANNEL_ID)
         if channel:
-            embed = main_embed()
-            view = InfoView()
-            await channel.send(embed=embed, view=view)
-            print(f"✅ Сообщение отправлено в канал #{channel.name}")
+            try:
+                # Проверяем, есть ли уже сообщение от бота
+                found_existing = False
+                async for message in channel.history(limit=10):
+                    if message.author == bot.user:
+                        found_existing = True
+                        break
+
+                if not found_existing:
+                    embed = main_embed()
+                    view = InfoView()
+                    await view.setup()
+                    await channel.send(embed=embed, view=view)
+                    print(f"✅ Сообщение отправлено в канал #{channel.name}")
+                else:
+                    print(f"ℹ️ Сообщение уже существует в канале #{channel.name}")
+
+            except discord.errors.Forbidden:
+                print(f"⚠️ Нет прав для отправки сообщений в канал #{channel.name}")
+            except Exception as e:
+                print(f"⚠️ Ошибка при отправке в канал: {e}")
 
         # Устанавливаем статус бота
         await bot.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
                 name="GPT RUST Community"
-            )
+            ),
+            status=discord.Status.online
         )
 
+        print("✅ Бот полностью готов к работе!")
+
     except Exception as e:
-        print(f"❌ Ошибка в on_ready: {e}")
+        print(f"❌ Критическая ошибка в on_ready: {e}")
 
 
 # ================= ERROR HANDLING =================
@@ -249,19 +295,41 @@ async def on_ready():
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
+    print(f"⚠️ Ошибка команды: {error}")
 
 
-# ================= RUN BOT =================
+# ================= ЗАПУСК БОТА =================
 
-if __name__ == "__main__":
-    if TOKEN == 'ВАШ_ТОКЕН_БОТА_ЗДЕСЬ':
-        print("❌ ОШИБКА: Замените 'ВАШ_ТОКЕН_БОТА_ЗДЕСЬ' на ваш реальный токен бота!")
-        print("1. Получите токен на https://discord.com/developers/applications")
-        print("2. Замените строку TOKEN в коде")
-        exit(1)
-
+async def main():
+    """Основная функция запуска"""
     try:
-        bot.run(TOKEN)
+        # Проверяем наличие токена
+        if not TOKEN:
+            print("❌ ОШИБКА: Токен бота не найден!")
+            print("\nИнструкция для bothost.ru:")
+            print("1. Зайдите в панель управления bothost.ru")
+            print("2. Найдите раздел 'Переменные окружения'")
+            print("3. Добавьте переменную: DISCORD_TOKEN=ваш_токен_бота")
+            print("4. Перезапустите бота")
+            return
+
+        print(f"🚀 Запуск бота GPT RUST...")
+        print(f"🆔 Будет работать на сервере: {GUILD_ID}")
+        print(f"📢 Канал для сообщений: {CHANNEL_ID}")
+
+        # Запускаем бота
+        async with bot:
+            await bot.start(TOKEN)
+
     except discord.errors.LoginFailure:
         print("❌ ОШИБКА: Неверный токен бота!")
-        print("Проверьте правильность токена")
+        print("Проверьте правильность токена в настройках bothost.ru")
+    except KeyboardInterrupt:
+        print("\n👋 Остановка бота...")
+    except Exception as e:
+        print(f"❌ Непредвиденная ошибка: {e}")
+
+
+if __name__ == "__main__":
+    # Запускаем асинхронную функцию
+    asyncio.run(main())
