@@ -7,7 +7,7 @@ from discord.ext import commands
 
 # ================= НАСТРОЙКИ =================
 # Для bothost.ru используем переменную окружения
-TOKEN = os.getenv("MTQ1ODA5OTAwNzc0OTQ5MjgxMQ.Gzvks2.rZJUGkfb6wPM56Qdprkqf1bg6rcU34YkuO-AX0", "").strip()  # Получаем токен из переменных окружения
+TOKEN = os.getenv("MTQ1ODA5OTAwNzc0OTQ5MjgxMQ.Gzvks2.rZJUGkfb6wPM56Qdprkqf1bg6rcU34YkuO-AX0").strip()  # Получаем токен из переменных окружения
 
 # ID Discord сервера и канала
 GUILD_ID = 1453830527705550981
