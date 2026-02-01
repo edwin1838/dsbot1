@@ -1,15 +1,30 @@
-import discord
-from discord.ext import commands
 import asyncio
 import os
+from datetime import datetime
+
+import discord
+from discord.ext import commands
 
 # ================= НАСТРОЙКИ =================
 # Для bothost.ru используем переменную окружения
-TOKEN = os.getenv("DISCORD_TOKEN", "").strip()  # Получаем токен из переменных окружения
+TOKEN = os.getenv("MTQ1ODA5OTAwNzc0OTQ5MjgxMQ.Gzvks2.rZJUGkfb6wPM56Qdprkqf1bg6rcU34YkuO-AX0", "").strip()  # Получаем токен из переменных окружения
 
 # ID Discord сервера и канала
 GUILD_ID = 1453830527705550981
 CHANNEL_ID = 1458082973382475873
+
+# РОЛИ ДЛЯ АВТОМАТИЧЕСКОЙ ВЫДАЧИ ПРИ ВХОДЕ
+# ВСТАВЬТЕ РЕАЛЬНЫЕ ID РОЛЕЙ С ВАШЕГО СЕРВЕРА!
+AUTO_ROLES = [
+    1453831562340003940,  # Это @everyone (основная роль)
+    1458091690412871742
+    # Добавьте сюда ID других ролей, которые нужно выдавать автоматически:
+    # 123456789012345678,  # Пример: Роль "Игрок"
+    # 987654321098765432,  # Пример: Роль "Участник"
+]
+
+# Канал для приветственного сообщения (опционально)
+WELCOME_CHANNEL_ID = 1458083054571487254  # Вставьте ID канала для приветствий, или оставьте 0 для отключения
 
 # СТИЛЬ MIRAGE
 MIRAGE_YELLOW = 0xC0E2F2
@@ -24,6 +39,8 @@ BANNER_SUPPORT = "https://cdn.discordapp.com/attachments/1458089769929277533/146
 # ================= BOT =================
 
 intents = discord.Intents.default()
+intents.members = True  # ВАЖНО: необходимо для отслеживания входа участников
+intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 
@@ -67,6 +84,124 @@ class InfoView(discord.ui.View):
     async def setup(self):
         """Инициализация после создания бота"""
         self.add_item(InfoSelect())
+
+
+# ================= ФУНКЦИИ АВТОМАТИЧЕСКОЙ ВЫДАЧИ РОЛЕЙ =================
+
+async def assign_auto_roles(member: discord.Member):
+    """
+    Автоматически выдает роли новому участнику
+    """
+    try:
+        added_roles = []
+        failed_roles = []
+
+        for role_id in AUTO_ROLES:
+            try:
+                # Пропускаем некорректные ID
+                if role_id == 0:
+                    continue
+
+                # Получаем объект роли
+                role = member.guild.get_role(role_id)
+                if role:
+                    # Проверяем, нет ли уже этой роли у пользователя
+                    if role not in member.roles:
+                        await member.add_roles(role)
+                        added_roles.append(f"`{role.name}`")
+                        print(f"✅ Выдана роль {role.name} пользователю {member.name}")
+                else:
+                    print(f"⚠️ Роль с ID {role_id} не найдена на сервере!")
+                    failed_roles.append(str(role_id))
+
+            except discord.Forbidden:
+                print(f"❌ Нет прав для выдачи роли {role_id}")
+                failed_roles.append(str(role_id))
+            except discord.HTTPException as e:
+                print(f"❌ Ошибка при выдаче роли {role_id}: {e}")
+                failed_roles.append(str(role_id))
+            except Exception as e:
+                print(f"❌ Неизвестная ошибка: {e}")
+                failed_roles.append(str(role_id))
+
+        # Возвращаем результат
+        return added_roles, failed_roles
+
+    except Exception as e:
+        print(f"❌ Критическая ошибка в assign_auto_roles: {e}")
+        return [], []
+
+
+def create_welcome_embed(member: discord.Member, added_roles: list):
+    """Создает embed для приветственного сообщения"""
+    embed = discord.Embed(
+        title="🚀 Добро пожаловать на сервер!",
+        description=(
+            f"**{member.mention}, рады видеть тебя на сервере GPT RUST!**\n\n"
+            "🎮 Здесь ты найдешь единомышленников по игре Rust\n"
+            "📢 Следи за новостями и анонсами\n"
+            "🤝 Общайся, играй и развивайся с нами!\n\n"
+            f"👥 **Теперь нас:** {member.guild.member_count}"
+        ),
+        color=MIRAGE_YELLOW,
+        timestamp=datetime.utcnow()
+    )
+
+    # Добавляем информацию о выданных ролях
+    if added_roles:
+        embed.add_field(
+            name="✅ Автоматически выданы роли:",
+            value=", ".join(added_roles),
+            inline=False
+        )
+
+    embed.add_field(
+        name="📌 Важно:",
+        value="Ознакомься с правилами в канале <#1458082973382475873>",
+        inline=False
+    )
+
+    if LOGO_URL:
+        embed.set_thumbnail(url=LOGO_URL)
+        embed.set_footer(text="GPT RUST Community", icon_url=LOGO_URL)
+    else:
+        embed.set_footer(text="GPT RUST Community")
+
+    return embed
+
+
+# ================= СОБЫТИЯ БОТА =================
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    """
+    Срабатывает когда новый участник заходит на сервер
+    """
+    try:
+        print(f"👤 Новый участник: {member.name} ({member.id}) присоединился к серверу")
+
+        # Выдаем автоматические роли
+        added_roles, failed_roles = await assign_auto_roles(member)
+
+        # Отправляем приветственное сообщение (если канал указан)
+        if WELCOME_CHANNEL_ID and added_roles:
+            welcome_channel = member.guild.get_channel(WELCOME_CHANNEL_ID)
+            if welcome_channel:
+                try:
+                    embed = create_welcome_embed(member, added_roles)
+                    await welcome_channel.send(embed=embed)
+                    print(f"📢 Отправлено приветственное сообщение для {member.name}")
+                except Exception as e:
+                    print(f"⚠️ Не удалось отправить приветствие: {e}")
+
+        # Логирование в консоль
+        if added_roles:
+            print(f"✅ {member.name} получил роли: {', '.join(added_roles)}")
+        if failed_roles:
+            print(f"⚠️ Не удалось выдать роли с ID: {', '.join(failed_roles)}")
+
+    except Exception as e:
+        print(f"❌ Ошибка в on_member_join: {e}")
 
 
 # ================= EMBEDS =================
@@ -226,6 +361,34 @@ async def info(interaction: discord.Interaction):
             pass
 
 
+# ================= КОМАНДА ДЛЯ РУЧНОЙ ВЫДАЧИ РОЛЕЙ =================
+
+@bot.tree.command(
+    name="add_roles",
+    description="Выдать автоматические роли участнику"
+)
+@commands.has_permissions(administrator=True)
+async def add_roles(interaction: discord.Interaction, member: discord.Member):
+    try:
+        await interaction.response.defer(ephemeral=True)
+
+        added_roles, failed_roles = await assign_auto_roles(member)
+
+        if added_roles:
+            message = f"✅ {member.mention} получил роли: {', '.join(added_roles)}"
+        else:
+            message = f"ℹ️ {member.mention} уже имеет все автоматические роли"
+
+        if failed_roles:
+            message += f"\n⚠️ Не удалось выдать роли с ID: {', '.join(failed_roles)}"
+
+        await interaction.followup.send(message, ephemeral=True)
+
+    except Exception as e:
+        print(f"Ошибка в команде add_roles: {e}")
+        await interaction.followup.send("Произошла ошибка при выполнении команды.", ephemeral=True)
+
+
 # ================= ON READY =================
 
 @bot.event
@@ -234,6 +397,12 @@ async def on_ready():
         print("=" * 50)
         print(f"✅ Бот {bot.user} успешно запущен!")
         print(f"👥 Серверов: {len(bot.guilds)}")
+        print("=" * 50)
+
+        # Проверяем настройки
+        print(f"🔧 Настройки автоматической выдачи ролей:")
+        print(f"   • Ролей для выдачи: {len(AUTO_ROLES)}")
+        print(f"   • Приветственный канал: {'Включен' if WELCOME_CHANNEL_ID else 'Отключен'}")
         print("=" * 50)
 
         # Синхронизируем команды с задержкой
@@ -316,6 +485,13 @@ async def main():
         print(f"🚀 Запуск бота GPT RUST...")
         print(f"🆔 Будет работать на сервере: {GUILD_ID}")
         print(f"📢 Канал для сообщений: {CHANNEL_ID}")
+
+        # Предупреждение о необходимости настройки
+        if len(AUTO_ROLES) <= 1:  # Если только @everyone
+            print("\n⚠️ ВНИМАНИЕ: Не настроены роли для автоматической выдачи!")
+            print("Добавьте ID ролей в список AUTO_ROLES в начале файла")
+            print("Как узнать ID роли: https://support.discord.com/hc/articles/206346498")
+            print("Пример: AUTO_ROLES = [123456789, 987654321]")
 
         # Запускаем бота
         async with bot:
