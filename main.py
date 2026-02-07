@@ -1,208 +1,205 @@
+import re
+import uuid
+
 import discord
 from discord.ext import commands
-import asyncio
-import os
-import sys
-from datetime import datetime
 
 # ================= НАСТРОЙКИ =================
-TOKEN = os.getenv("DISCORD_TOKEN", "MTQ1ODA5OTAwNzc0OTQ5MjgxMQ.Gzvks2.rZJUGkfb6wPM56Qdprkqf1bg6rcU34YkuO-AX0").strip()
 
-# Проверяем токен сразу
-if not TOKEN:
-    print("❌ ОШИБКА: Токен бота не найден в переменных окружения!")
-    print("Токен должен быть установлен как переменная окружения DISCORD_TOKEN")
-    sys.exit(1)
+BOT_TOKEN = "MTQ1ODA5OTAwNzc0OTQ5MjgxMQ.GihYRh.DgDiDnEnrvDw6qGGoPec0TffwIDzPu9utIkSOk"
 
-# ID Discord сервера и канала
-GUILD_ID = 1453830527705550981
-CHANNEL_ID = 1458082973382475873
+SUPPORT_CHANNEL_ID = 1458081896272625664  # канал где создаются ветки
+SUPPORT_PANEL_CHANNEL_ID = 1458081893898518548  # админ-панель
 
-# РОЛИ ДЛЯ АВТОМАТИЧЕСКОЙ ВЫДАЧИ
-# ВАЖНО: Добавьте реальные ID ролей с вашего сервера
-AUTO_ROLES = [
-    1453831562340003940,  # @everyone (основная роль)
-    1458091690412871742,
-    # Примеры (замените на реальные ID):
-    # 123456789012345678,  # Роль "Игрок"
-    # 987654321098765432,  # Роль "Участник"
-]
+SUPPORT_ROLES = ["Support", "Admin"]
 
-# СТИЛЬ MIRAGE
-MIRAGE_YELLOW = 0xC0E2F2
+STEAM_REGEX = re.compile(r"^7656119\d{10}$")
 
-# ================= BOT =================
+COLOR_MAIN = 0xF1C40F
+COLOR_SUCCESS = 0x2ECC71
+COLOR_ERROR = 0xE74C3C
+
+# =============================================
 
 intents = discord.Intents.default()
-intents.members = True  # КРИТИЧЕСКИ ВАЖНО для on_member_join
+intents.members = True
 intents.guilds = True
-intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-
-# ================= ПРОВЕРКА ТОКЕНА =================
-
-def validate_token(token):
-    """Проверяет валидность токена"""
-    if not token:
-        return False, "Токен пустой"
-
-    # Проверяем длину и формат
-    if len(token) < 50:
-        return False, f"Токен слишком короткий: {len(token)} символов"
-
-    # Токен обычно начинается с определенных префиксов
-    valid_prefixes = ['MT', 'OT', 'Nz', 'ND', 'MTA', 'OD']
-    if not any(token.startswith(prefix) for prefix in valid_prefixes):
-        return False, "Неверный формат токена"
-
-    return True, "Токен выглядит валидным"
+# ticket_id -> data
+tickets = {}
 
 
-# ================= ОБРАБОТЧИКИ ОШИБОК =================
+# ================= UTILS =================
 
-@bot.event
-async def on_error(event, *args, **kwargs):
-    print(f"❌ Ошибка в событии {event}: {args} {kwargs}")
-
-
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        return
-    print(f"⚠️ Ошибка команды: {error}")
+def valid_steam(steam: str) -> bool:
+    return bool(STEAM_REGEX.match(steam))
 
 
-# ================= ОСНОВНЫЕ ФУНКЦИИ =================
-
-async def assign_auto_roles(member: discord.Member):
-    """Автоматически выдает роли новому участнику"""
-    try:
-        print(f"🎯 Попытка выдать роли пользователю: {member.name}")
-
-        added_roles = []
-        for role_id in AUTO_ROLES:
-            try:
-                role = member.guild.get_role(role_id)
-                if role and role not in member.roles:
-                    await member.add_roles(role)
-                    added_roles.append(role.name)
-                    print(f"✅ Выдана роль: {role.name}")
-            except Exception as e:
-                print(f"⚠️ Не удалось выдать роль {role_id}: {e}")
-
-        return added_roles
-    except Exception as e:
-        print(f"❌ Ошибка в assign_auto_roles: {e}")
-        return []
+def is_support(member: discord.Member):
+    return any(r.name in SUPPORT_ROLES for r in member.roles)
 
 
-@bot.event
-async def on_member_join(member: discord.Member):
-    """Обработчик входа нового участника"""
-    try:
-        print(f"👤 Новый участник: {member.name}")
-        await assign_auto_roles(member)
-    except Exception as e:
-        print(f"❌ Ошибка в on_member_join: {e}")
+# ================= USER THREAD =================
+
+async def create_ticket(interaction, title, fields):
+    base_channel = interaction.guild.get_channel(SUPPORT_CHANNEL_ID)
+    panel_channel = interaction.guild.get_channel(SUPPORT_PANEL_CHANNEL_ID)
+
+    ticket_id = str(uuid.uuid4())[:8]
+
+    thread = await base_channel.create_thread(
+        name="Ваш тикет",
+        type=discord.ChannelType.private_thread
+    )
+
+    await thread.add_user(interaction.user)
+
+    tickets[ticket_id] = {
+        "thread_id": thread.id,
+        "user_id": interaction.user.id,
+        "title": title
+    }
+
+    embed_user = discord.Embed(title=f"📌 {title}", color=COLOR_MAIN)
+    for n, v in fields:
+        embed_user.add_field(name=n, value=v or "Пусто", inline=False)
+
+    embed_user.add_field(
+        name="",
+        value="━━━━━━━━━━━━━━\n🕐 **Модератор изучает запрос —**\nпожалуйста, подождите",
+        inline=False
+    )
+
+    await thread.send(embed=embed_user)
+
+    # ===== ADMIN PANEL =====
+
+    embed_admin = discord.Embed(
+        title="🎟 Новый тикет",
+        color=COLOR_MAIN
+    )
+    embed_admin.add_field(name="ID", value=ticket_id, inline=True)
+    embed_admin.add_field(name="Тип", value=title, inline=True)
+    embed_admin.add_field(name="Пользователь", value=interaction.user.mention, inline=False)
+
+    view = AdminPanelView(ticket_id)
+
+    await panel_channel.send(embed=embed_admin, view=view)
+
+    await interaction.response.send_message(
+        f"Готово! 🎟️ Ваш тикет создан!\nКликните по {thread.mention}, чтобы перейти.",
+        ephemeral=True
+    )
 
 
-# ================= КОМАНДЫ =================
+# ================= ADMIN MODAL =================
 
-@bot.tree.command(name="test", description="Тестовая команда")
-async def test(interaction: discord.Interaction):
-    await interaction.response.send_message("✅ Бот работает!", ephemeral=True)
+class ReplyModal(discord.ui.Modal, title="Ответ пользователю"):
+    message = discord.ui.TextInput(
+        label="Ответ от GPT-Ticket",
+        style=discord.TextStyle.paragraph
+    )
 
+    def __init__(self, ticket_id):
+        super().__init__()
+        self.ticket_id = ticket_id
 
-@bot.tree.command(name="roles", description="Проверить выдачу ролей")
-async def roles(interaction: discord.Interaction):
-    try:
-        added = await assign_auto_roles(interaction.user)
-        if added:
-            await interaction.response.send_message(f"✅ Вам выданы роли: {', '.join(added)}", ephemeral=True)
-        else:
-            await interaction.response.send_message("ℹ️ У вас уже есть все автоматические роли", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
-
-
-# ================= ЗАПУСК =================
-
-@bot.event
-async def on_ready():
-    print("=" * 50)
-    print(f"✅ Бот {bot.user} успешно запущен!")
-    print(f"🆔 ID бота: {bot.user.id}")
-    print(f"👥 Серверов: {len(bot.guilds)}")
-    print("=" * 50)
-
-    # Синхронизация команд
-    try:
-        await bot.tree.sync()
-        print("✅ Команды синхронизированы")
-    except Exception as e:
-        print(f"⚠️ Ошибка синхронизации: {e}")
-
-    # Проверяем наличие сервера
-    guild = bot.get_guild(GUILD_ID)
-    if guild:
-        print(f"✅ Найден сервер: {guild.name}")
-        print(f"👥 Участников: {guild.member_count}")
-
-        # Проверяем канал
-        channel = guild.get_channel(CHANNEL_ID)
-        if channel:
-            print(f"📢 Канал найден: #{channel.name}")
-        else:
-            print(f"⚠️ Канал {CHANNEL_ID} не найден")
-    else:
-        print(f"⚠️ Сервер {GUILD_ID} не найден")
-
-    print("=" * 50)
-
-
-async def main():
-    """Основная функция запуска"""
-    try:
-        # Валидация токена
-        is_valid, message = validate_token(TOKEN)
-        if not is_valid:
-            print(f"❌ Неверный токен: {message}")
-            print("\nКак получить токен:")
-            print("1. https://discord.com/developers/applications")
-            print("2. Выберите ваше приложение")
-            print("3. Bot → Reset Token → Copy")
-            print("4. На bothost.ru добавьте переменную: DISCORD_TOKEN=ваш_токен")
+    async def on_submit(self, interaction):
+        data = tickets.get(self.ticket_id)
+        if not data:
+            await interaction.response.send_message("🚫 Тикет не найден", ephemeral=True)
             return
 
-        print(f"🚀 Запуск бота...")
-        print(f"✅ Токен валидный ({len(TOKEN)} символов)")
+        thread = interaction.guild.get_channel(data["thread_id"])
 
-        # Проверяем интенты
-        print(f"🔧 Интенты активированы:")
-        print(f"   • Members: {intents.members}")
-        print(f"   • Guilds: {intents.guilds}")
+        embed = discord.Embed(
+            description=self.message.value,
+            color=COLOR_SUCCESS
+        )
+        embed.set_author(name="GPT-Ticket")
 
-        async with bot:
-            await bot.start(TOKEN)
-
-    except discord.LoginFailure:
-        print("❌ Ошибка авторизации: Неверный токен!")
-        print("Проверьте токен на https://discord.com/developers/applications")
-    except Exception as e:
-        print(f"❌ Непредвиденная ошибка: {type(e).__name__}: {e}")
+        await thread.send(embed=embed)
+        await interaction.response.send_message("✅ Ответ отправлен", ephemeral=True)
 
 
-if __name__ == "__main__":
-    print("=" * 50)
-    print("🤖 Запуск Discord бота GPT RUST")
-    print("=" * 50)
+# ================= ADMIN BUTTONS =================
 
-    # Запускаем с обработкой KeyboardInterrupt
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n👋 Остановка бота...")
-    except Exception as e:
-        print(f"💥 Критическая ошибка: {e}")
+class AdminPanelView(discord.ui.View):
+    def __init__(self, ticket_id):
+        super().__init__(timeout=None)
+        self.ticket_id = ticket_id
+
+    @discord.ui.button(label="📨 Ответить", style=discord.ButtonStyle.success)
+    async def reply(self, interaction: discord.Interaction, _):
+        if not is_support(interaction.user):
+            await interaction.response.send_message("🚫 Нет доступа", ephemeral=True)
+            return
+        await interaction.response.send_modal(ReplyModal(self.ticket_id))
+
+    @discord.ui.button(label="🔒 Закрыть", style=discord.ButtonStyle.secondary)
+    async def close(self, interaction: discord.Interaction, _):
+        if not is_support(interaction.user):
+            await interaction.response.send_message("🚫 Нет доступа", ephemeral=True)
+            return
+
+        data = tickets.pop(self.ticket_id, None)
+        if data:
+            thread = interaction.guild.get_channel(data["thread_id"])
+            await thread.edit(archived=True, locked=True)
+
+        await interaction.response.send_message("🔒 Тикет закрыт", ephemeral=True)
+
+    # ================= MODAL =================
+
+    class ServerModal(discord.ui.Modal, title="Вопрос по серверу"):
+        server = discord.ui.TextInput(label="Сервер")
+        steam = discord.ui.TextInput(label="SteamID")
+        desc = discord.ui.TextInput(label="Описание", style=discord.TextStyle.paragraph)
+        proof = discord.ui.TextInput(label="Доп. материалы", required=False)
+
+        async def on_submit(self, interaction):
+            if not valid_steam(self.steam.value):
+                await interaction.response.send_message("🚫 Неверный SteamID", ephemeral=True)
+                return
+
+            await create_ticket(
+                interaction,
+                "Вопрос по серверу",
+                [
+                    ("Сервер", self.server.value),
+                    ("SteamID", self.steam.value),
+                    ("Описание", self.desc.value),
+                    ("Доп. материалы", self.proof.value),
+                ]
+            )
+
+    # ================= PANEL =================
+
+    class TicketPanel(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=None)
+
+        @discord.ui.select(
+            placeholder="Выберите тип обращения",
+            options=[
+                discord.SelectOption(label="Вопрос по серверу", emoji="🛠"),
+                discord.SelectOption(label="Жалоба", emoji="🚨"),
+                discord.SelectOption(label="Обжалование", emoji="⚖️"),
+                discord.SelectOption(label="Сотрудничество", emoji="👑"),
+            ]
+        )
+        async def select(self, interaction, select):
+            await interaction.response.send_modal(ServerModal())
+
+    # ================= READY =================
+
+    @bot.event
+    async def on_ready():
+        print(f"✅ GPT-Ticket запущен как {bot.user}")
+        bot.add_view(TicketPanel())
+
+    # ================= START =================
+
+    bot.run(BOT_TOKEN)
